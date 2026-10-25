@@ -13,6 +13,8 @@ docker compose ps   # all services must show status "running"
 Then verify each infrastructure service is actually ready to accept connections — not just running:
 
 - **PostgreSQL:** `docker compose exec db pg_isready -U streamtube` — expect `accepting connections`
+- **Redis:** `docker compose exec redis redis-cli ping` — expect `PONG`
+- **Storage (SeaweedFS):** `docker compose ps storage` — expect `healthy` (S3 on port `8333`)
 
 Only start the NestJS dev server (`npm run start:dev`) when the user **explicitly** asks to run the application — never as part of "start the environment".
 
@@ -34,6 +36,9 @@ docker compose exec nestjs-api npm run start:dev
 Services:
 - `nestjs-api` — NestJS API, port `3000`
 - `db` — PostgreSQL 17, port `5432`, database `streamtube`, user/password `streamtube`
+- `redis` — Redis 7 (BullMQ queue `video-processing`), not published to the host
+- `storage` — SeaweedFS with S3 API on port `8333` (volume `storage-data`); keys come from `S3_ACCESS_KEY`/`S3_SECRET_KEY` in `.env`
+- `video-worker` — same image as `nestjs-api` (the image includes `ffmpeg`/`ffprobe`); runs `src/worker.ts` (Nest application context, no HTTP) and consumes the queue. `docker compose logs -f video-worker` to follow it; restart it after changing worker code (`docker compose restart video-worker`)
 
 All verification and teardown commands run on the **host machine**:
 
@@ -63,6 +68,9 @@ npm run start:dev                        # Dev server with hot-reload
 npm run build                            # Compile to dist/
 npm run start:prod                       # Run compiled build
 
+npm run start:worker                     # Worker by hand (the compose service already runs it)
+npm run openapi:export                   # Regenerate openapi.json
+
 npm test                                 # Unit tests
 npm run test:watch                       # Unit tests in watch mode
 npm run test:cov                         # Coverage report
@@ -90,6 +98,8 @@ Integration and e2e suites share a single test database. They **must** be run wi
 docker compose exec nestjs-api npm test -- --runInBand
 docker compose exec nestjs-api npm run test:e2e   # already configured
 ```
+
+Tests that need the queue use the Redis prefix `bull-test` (`QUEUE_PREFIX`, helper `src/test/bull-root-module.ts`) so the running `video-worker`, which uses the default `bull`, does not consume their jobs. The exception is `test/videos-flow.e2e-spec.ts`, which uses the default prefix **on purpose** to exercise the real worker — it needs the `video-worker` container up. Storage and Redis are real in integration/e2e tests (Compose network); signed URLs are made reachable in tests by setting `S3_PUBLIC_ENDPOINT` to `S3_ENDPOINT`.
 
 Parallel execution causes FK violations, deadlocks, and cross-suite contamination because suites truncate or seed shared tables concurrently.
 
@@ -146,6 +156,7 @@ Whenever possible, prefer storing only the bare address in `.env` and composing 
 
 NestJS with standard module structure. Source lives in `src/`, compiled output in `dist/`.
 
+- `src/videos/` (module `VideosModule`): upload by S3 multipart straight to the storage, queue producer, reconciliation service; `src/storage/`: S3 client wrapper (`StorageService`); `src/worker/`: BullMQ processor, `ffprobe`/thumbnail services and the reconciliation scheduler, started by `src/worker.ts`
 - Each domain feature gets its own module (e.g., `UsersModule`, `VideosModule`) registered in `AppModule`
 - Controllers handle HTTP routing; Services hold business logic; both are scoped to their module
 

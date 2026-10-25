@@ -1,11 +1,11 @@
 ---
 libs:
   "@nestjs/bullmq":
-    version: "^12.0.0"
+    version: "^11.0.5"
     context7_id: "unavailable — fetched from official web docs (docs.nestjs.com)"
     fetched_at: "2026-10-25T16:11:19-0300"
   "bullmq":
-    version: "^6.4.2"
+    version: "^5.81.5"
     context7_id: "unavailable — fetched from official web docs (docs.bullmq.io)"
     fetched_at: "2026-10-25T16:11:19-0300"
   "@aws-sdk/client-s3":
@@ -28,8 +28,8 @@ sources_mtime:
 
 | Pacote | Versão fixada | Observação |
 |---|---|---|
-| `@nestjs/bullmq` | `^12.0.0` | Peer: `@nestjs/core` e `@nestjs/common` `^10 \|\| ^11 \|\| ^12` e `bullmq` `^3 \|\| ^4 \|\| ^5 \|\| ^6`. Compatível com o NestJS 11 instalado no projeto. |
-| `bullmq` | `^6.4.2` | `engines.node >= 14.17`. |
+| `@nestjs/bullmq` | `^11.0.5` | **Corrigido na implementação (SI-03.6):** a versão `12.0.0` inicialmente fixada aqui é só ESM (`type: module`) e o Jest do projeto, em CommonJS, não consegue carregá-la. A linha 11.x é CommonJS. Peer: `@nestjs/core` e `@nestjs/common` `^10 \|\| ^11` e `bullmq` `^3 \|\| ^4 \|\| ^5`. Compatível com o NestJS 11 instalado no projeto. |
+| `bullmq` | `^5.81.5` | Casa com o peer do `@nestjs/bullmq` 11.x (`bullmq` 6 só é aceito pela linha 12). Mesma API de `attempts`/`backoff`/`jobId`. |
 | `@aws-sdk/client-s3` | `^3.1156.0` | `engines.node >= 20`. |
 | `@aws-sdk/s3-request-presigner` | `^3.1156.0` | Mesma linha de versão do `client-s3`. |
 
