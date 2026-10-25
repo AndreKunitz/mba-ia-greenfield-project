@@ -12,6 +12,61 @@ services:
         condition: service_healthy
       mailpit:
         condition: service_started
+      redis:
+        condition: service_healthy
+      storage:
+        condition: service_healthy
+
+  video-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    # Node runs as the main process (no npm in between) so SIGTERM reaches the
+    # shutdown hooks and the running job can finish before the container stops.
+    command: ["node", "-r", "ts-node/register", "-r", "tsconfig-paths/register", "src/worker.ts"]
+    restart: on-failure
+    volumes:
+      - .:/home/node/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      storage:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  storage:
+    image: chrislusf/seaweedfs:latest
+    # SeaweedFS S3: the credentials file is generated from the env at startup,
+    # so the keys live only in .env. Port 8333 is also the public endpoint.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        printf '{"identities":[{"name":"streamtube","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin","Read","Write","List","Tagging"]}]}'
+        "$$S3_ACCESS_KEY" "$$S3_SECRET_KEY" > /tmp/s3.json &&
+        exec weed server -dir=/data -s3 -s3.port=8333
+        -s3.config=/tmp/s3.json -s3.allowedOrigins="$$S3_CORS_ALLOWED_ORIGINS"
+    environment:
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:?S3_ACCESS_KEY is required in .env}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:?S3_SECRET_KEY is required in .env}
+      S3_CORS_ALLOWED_ORIGINS: ${S3_CORS_ALLOWED_ORIGINS:-*}
+    ports:
+      - "8333:8333"
+    volumes:
+      - storage-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -o /dev/null http://localhost:8333"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   db:
     image: postgres:17
@@ -33,4 +88,6 @@ services:
       - "1025:1025"
       - "8025:8025"
 
+volumes:
+  storage-data:
 
