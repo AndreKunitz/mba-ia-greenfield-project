@@ -118,3 +118,79 @@ Content-Type: {{contentType}}
   "token": "{{resetToken}}",
   "new_password": "new-password123"
 }
+
+
+###
+# ─────────────────────────────────────────────
+# VÍDEOS (requer login: o token vem do request "login")
+# ─────────────────────────────────────────────
+
+@videoSize = 2048
+@publicId = {{createVideo.response.body.$.public_id}}
+
+### 10. Criar rascunho do vídeo (declara o tamanho; devolve part_size_bytes e part_count)
+# @name createVideo
+POST {{baseUrl}}/videos
+Authorization: Bearer {{accessToken}}
+Content-Type: {{contentType}}
+
+{
+  "filename": "clip.mp4",
+  "content_type": "video/mp4",
+  "size_bytes": {{videoSize}}
+}
+
+
+### 11. Assinar as URLs das partes
+# @name uploadUrls
+POST {{baseUrl}}/videos/{{publicId}}/upload-urls
+Authorization: Bearer {{accessToken}}
+Content-Type: {{contentType}}
+
+{
+  "part_numbers": [1]
+}
+
+
+### 12. Enviar a parte direto ao storage (NÃO passa pela API)
+# Cole a URL da parte 1 (resposta do request 11) e guarde o header ETag da resposta.
+# Exemplo no terminal: curl -X PUT -T clip.mp4 -D - "<url>"
+# PUT <url assinada>
+
+
+### 13. Estado do upload (partes já recebidas, para retomar)
+GET {{baseUrl}}/videos/{{publicId}}/upload
+Authorization: Bearer {{accessToken}}
+
+
+### 14. Finalizar o upload (informe o ETag de cada parte)
+POST {{baseUrl}}/videos/{{publicId}}/complete
+Authorization: Bearer {{accessToken}}
+Content-Type: {{contentType}}
+
+{
+  "parts": [
+    { "part_number": 1, "etag": "<etag da parte 1>" }
+  ]
+}
+
+
+### 15. Status do processamento (somente o dono)
+GET {{baseUrl}}/videos/{{publicId}}/status
+Authorization: Bearer {{accessToken}}
+
+
+### 16. Metadados públicos (só vídeos ready; sem login)
+GET {{baseUrl}}/videos/{{publicId}}
+
+
+### 17. Streaming (302 para URL assinada; aceita Range)
+GET {{baseUrl}}/videos/{{publicId}}/stream
+
+
+### 18. Download (302 com Content-Disposition: attachment)
+GET {{baseUrl}}/videos/{{publicId}}/download
+
+
+### 19. Thumbnail (302 para a imagem JPEG)
+GET {{baseUrl}}/videos/{{publicId}}/thumbnail

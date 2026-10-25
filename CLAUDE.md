@@ -12,7 +12,7 @@ This is a monorepo with two main areas:
 
 - `nestjs-project/` — Backend API (NestJS 11, TypeScript, Express). Contains modules for users, channels, videos, comments, etc.
 - `docs/` — Project documentation, architecture diagrams, and planning.
-- `next-frontend/` (Next.js) — not yet initialized
+- `next-frontend/` — Frontend (Next.js)
 
 ## Architecture (C4 Container Diagram)
 
@@ -22,9 +22,21 @@ See `docs/diagrams/software-arch.mermaid` for the full diagram. Key containers:
 - **API** (Nest.js) → business rules, auth, reads/writes DB, uploads to storage, publishes jobs to queue, sends emails
 - **Video Worker** (FFmpeg) → consumes jobs from queue, processes videos, updates DB and storage
 - **Database** (PostgreSQL) → users, channels, videos, comments, likes
-- **Object Storage** (S3/MinIO) → video files and thumbnails
-- **Message Queue** (TBD) → video processing job queue
+- **Object Storage** (SeaweedFS, S3-compatible) → video files and thumbnails
+- **Message Queue** (Redis + BullMQ) → video processing job queue (`video-processing`)
 - **Email Service** (SMTP) → account confirmation and password recovery
+
+## Videos (Phase 03)
+
+Module `nestjs-project/src/videos/`; storage client in `src/storage/`; worker in `src/worker/` (entry point `src/worker.ts`, container `video-worker`).
+
+- **Upload without passing bytes through the API:** `POST /videos` creates a draft and an S3 multipart upload; `POST /videos/:publicId/upload-urls` signs part URLs; the browser `PUT`s the parts straight to the storage; `POST /videos/:publicId/complete` (202) validates the parts, moves the video to `processing` and publishes the job. `GET /videos/:publicId/upload` returns the upload state for resuming. Limit: 10GB (`VIDEO_MAX_SIZE_BYTES`), 64 MiB parts (`VIDEO_PART_SIZE_BYTES`).
+- **Reading:** `GET /videos/:publicId` (public metadata, only `ready`), `/status` (owner only), `/stream`, `/download`, `/thumbnail` (302 to short-lived signed URLs, `Cache-Control: no-store`). The public id is an 11-char URL-safe id, not the UUID.
+- **Status cycle:** `draft → processing → ready | error`; `error_reason` is one of `invalid_media`, `processing_failed`, `upload_size_mismatch`, `upload_abandoned`.
+- **Processing:** queue `video-processing`, job `process-video` (id `video-<uuid>`, 3 attempts, exponential backoff). The worker runs `ffprobe`/`ffmpeg` over a signed internal URL with HTTP `Range` (never downloads the whole file), stores duration, metadata and a JPEG thumbnail.
+- **Reconciliation:** the worker registers a repeatable job `reconcile-videos` (every `VIDEO_RECONCILE_INTERVAL_SECONDS`) that requeues videos stuck in `processing` and closes drafts older than `VIDEO_UPLOAD_TTL_HOURS`, aborting their multipart.
+- **Compose services:** `storage` (SeaweedFS, S3 on 8333), `redis`, `video-worker` (same image as `nestjs-api`, which includes `ffmpeg`).
+- Manual 10GB check: `docs/phases/phase-03-videos/manual-10gb-roteiro.md`.
 
 ## Docker Networking
 
