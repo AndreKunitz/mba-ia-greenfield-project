@@ -12,6 +12,11 @@ O conteúdo precisa ser um vídeo válido para chegar a `ready`. Um arquivo de z
 # Opção A — só o upload (rápido): 10 GiB de zeros
 head -c 10737418240 /dev/zero > /tmp/big.mp4
 
+# Opção C — vídeo válido de 10 GiB, rápido: um mp4 pequeno (moov no início) estendido com
+# truncate. O ffprobe lê a duração do mp4 e o tamanho total; o arquivo é esparso no disco.
+ffmpeg -f lavfi -i testsrc=duration=20:size=640x360:rate=25 -f lavfi -i sine=duration=20 \
+  -c:v libx264 -c:a aac -movflags +faststart /tmp/big.mp4 && truncate -s 10737418240 /tmp/big.mp4
+
 # Opção B — vídeo real (lento): ruído H.264 até ~10 GiB
 ffmpeg -f lavfi -i "nullsrc=size=1920x1080:rate=30,geq=random(1)*255:128:128" \
   -t 1800 -c:v libx264 -crf 8 -pix_fmt yuv420p /tmp/big.mp4
@@ -32,16 +37,15 @@ Esperado: `201`, `part_size_bytes` = 67108864, `part_count` = 160. Guarde `publi
 
 ## 3. Enviar as 160 partes direto ao storage
 
-Pegue as URLs em lotes (a API assina, o `curl` envia os bytes ao storage):
+Peça **todas** as URLs numa única chamada (a API assina, o `curl` envia os bytes ao storage). O `ThrottlerGuard` global limita a 10 requisições por minuto por IP e `upload-urls` não é isento: assinar em lotes de 10 partes dá 16 chamadas e a 11ª recebe `429` (aconteceu na execução registrada abaixo). O DTO aceita até 10 000 partes por chamada.
 
 ```bash
-for batch in $(seq 0 15); do
-  start=$((batch*10+1)); end=$((batch*10+10))
-  curl -s -X POST http://localhost:3000/videos/$PUBLIC_ID/upload-urls \
-    -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-    -d "{\"part_numbers\":[$(seq -s, $start $end)]}" > urls-$batch.json
-done
+curl -s -X POST http://localhost:3000/videos/$PUBLIC_ID/upload-urls \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d "{\"part_numbers\":[$(seq -s, 1 160)]}" > urls.json
 ```
+
+As URLs valem 15 min (`VIDEO_UPLOAD_URL_TTL_SECONDS`); numa rede lenta, assine de novo as partes que faltarem.
 
 Para cada parte `N` (`1..160`): extraia o trecho `dd if=/tmp/big.mp4 bs=67108864 skip=$((N-1)) count=1` e envie com
 `curl -X PUT -T <trecho> -D - "<url da parte N>"`. **Guarde o header `ETag` de cada resposta** — o `complete` exige a lista `{part_number, etag}` completa.
@@ -68,25 +72,27 @@ docker compose logs -f video-worker
 
 Esperado: `processing` → `ready` (opção B) com `duration_seconds` e thumbnail; o `ffprobe` lê o objeto por `Range`, sem baixar os 10GB. Depois: `GET /videos/$PUBLIC_ID/stream` (302) e um `curl -H "Range: bytes=0-99"` na URL devolvida (206).
 
-## 5. Registrar o resultado
+## 5. Resultado registrado
 
-Preencha abaixo e comite junto da fase.
+Execução de 2026-10-25, dentro do container `nestjs-api` (Docker Desktop no macOS, stack recém-criada com `docker compose down -v && up -d`), arquivo da opção C. Os `curl` rodaram no mesmo container com `--connect-to localhost:8333:storage:8333`, para a assinatura (feita para `localhost:8333`) continuar válida.
 
 | Item | Resultado |
 |------|-----------|
-| Data / máquina / disco |  |
-| Tamanho do arquivo (bytes) / partes |  |
-| Tempo total do upload |  |
-| `GET /` durante o upload (todos 200? maior tempo) |  |
-| Memória de `nestjs-api` antes → pico durante o upload |  |
-| Status final / tempo até `ready` |  |
-| Range `bytes=0-99` → 206? |  |
-| Observações |  |
+| Tamanho do arquivo / partes | 10 737 418 240 bytes (10 GiB) / 160 partes de 64 MiB |
+| Tempo do upload | partes 1–100 em 24 s e 101–160 em 14 s (≈ 38 s no total; disco local, sem rede real); houve uma pausa de ≈ 60 s porque a 11ª assinatura levou `429` (ver item 3) |
+| `GET /` durante o upload | 206 sondagens (1 por segundo): todas `200`, pior tempo 3,1 ms |
+| Memória de `nestjs-api` | amostras de `docker stats` (não contínuas): ≈ 716 MiB antes e durante o início do envio, ≈ 552 MiB logo depois. Nenhum crescimento perto dos 10 GiB enviados |
+| `complete` | `202` com as 160 partes; `ready` na 2ª consulta de `status` (< 2 s) |
+| Duração e metadados | `duration_seconds` = 20; h264 640×360 + aac; `size_bytes` = 10737418240 (lido pelo `ffprobe` por `Range`) |
+| `stream` com `Range: bytes=0-99` | `302` → `206`, 100 bytes |
+| `thumbnail` | `302` → `200 image/jpeg`, 19 816 bytes |
+| `download` | `302` com `attachment; filename="big.mp4"` → `206` ao pedir 1 byte |
+| Observações | o arquivo é esparso e o conteúdo além do mp4 original são zeros; vale como prova de upload, enfileiramento e leitura por `Range` de 10 GiB, não de decodificação de 10 GiB de vídeo. O espaço no storage foi liberado ao final |
 
 ## 6. Limpeza
 
 ```bash
-rm /tmp/big.mp4 urls-*.json
+rm /tmp/big.mp4 urls.json
 # Remove o objeto de 10GB do storage (escolha uma):
 docker compose down -v        # apaga TODOS os volumes, inclusive o banco
 # ou apague só o vídeo via S3 (aws cli / mc) apontando para http://localhost:8333

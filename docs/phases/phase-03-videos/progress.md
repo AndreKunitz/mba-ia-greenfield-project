@@ -133,9 +133,12 @@
 ## Verificação final
 - Unit + integração: 43 suítes, 295/295. E2E: 8 suítes, 88/88. `npx tsc --noEmit`: exit 0.
 - `npm run lint`: 150 erros / 40 avisos, todos dívida anterior à fase (registrada como tarefa separada). ESLint sem auto-fix no código da fase: só 2 erros, em linhas antigas de `SWAGGER_ENABLED` em `env.validation.integration-spec.ts`.
-- **Não verificado:** upload manual de 10GB (roteiro pronto) e `api.http` ponta a ponta.
+- **Upload manual de 10GB executado** em 2026-10-25 (resultado em `manual-10gb-roteiro.md`): 160 partes de 64 MiB direto ao storage, `GET /` sempre 200 (pior 3,1 ms), `ready` em < 2 s, `Range` → 206, thumbnail e download ok.
+- **Não verificado:** `api.http` ponta a ponta (coberto pelos e2e equivalentes).
 
 ### Follow-ups (fora do escopo)
+- **Achado do teste de 10GB:** `POST /videos/:publicId/upload-urls` está sujeito ao limite global de 10 req/min por IP; assinar 160 partes em lotes de 10 leva `429` na 11ª chamada. Contornável assinando tudo numa chamada (o DTO aceita até 10 000 partes), mas um cliente que retoma upload várias vezes por minuto esbarra nisso. Decidir se `upload-urls`/`upload` merecem limite próprio.
+- Os e2e deixam objetos de 2 KB no bucket (`videos/*/source.mp4` de testes que fazem `complete`): faltou limpar o storage nessas suítes.
 - Dívida de lint (150 erros) e `Function` type em `create-test-data-source.ts`.
 - Listas `ALL_ENTITIES` duplicadas em ~10 specs; `isPgUniqueViolationOnColumn` duplicado no `ChannelsService`.
 - Imagem `chrislusf/seaweedfs:latest` sem versão fixada; `S3_CORS_ALLOWED_ORIGINS=*` só para dev.
