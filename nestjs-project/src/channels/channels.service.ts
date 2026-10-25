@@ -1,25 +1,21 @@
 import { Injectable } from '@nestjs/common';
-import { DataSource, QueryFailedError } from 'typeorm';
+import { DataSource } from 'typeorm';
+import { isUniqueViolationOnColumn } from '../common/database/unique-violation.util';
 import { appendRandomSuffix, sanitizeNickname } from './nickname.util';
 import { Channel } from './entities/channel.entity';
 
-const PG_UNIQUE_VIOLATION = '23505';
 const NICKNAME_COLUMN = 'nickname';
 const MAX_RETRIES = 5;
-
-function isPgUniqueViolationOnColumn(err: unknown, column: string): boolean {
-  if (!(err instanceof QueryFailedError)) return false;
-  const e = err as any;
-  return (
-    e.code === PG_UNIQUE_VIOLATION &&
-    typeof e.detail === 'string' &&
-    e.detail.includes(column)
-  );
-}
 
 @Injectable()
 export class ChannelsService {
   constructor(private readonly dataSource: DataSource) {}
+
+  async findByUserId(userId: string): Promise<Channel | null> {
+    return this.dataSource
+      .getRepository(Channel)
+      .findOne({ where: { user_id: userId } });
+  }
 
   async createChannel(userId: string, email: string): Promise<Channel> {
     const baseNickname = sanitizeNickname(email.split('@')[0]);
@@ -45,7 +41,7 @@ export class ChannelsService {
             }),
           );
         } catch (err) {
-          if (isPgUniqueViolationOnColumn(err, NICKNAME_COLUMN)) {
+          if (isUniqueViolationOnColumn(err, NICKNAME_COLUMN)) {
             // Concurrent insert between pre-check and save — retry with new suffix
             nickname = appendRandomSuffix(baseNickname);
           } else {
